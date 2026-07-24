@@ -112,20 +112,67 @@ async function callEntsoe(params, env) {
 // ENTSO-E:n Point-solmut ovat harvoja (vain arvon MUUTTUESSA uusi Point) -
 // tama funktio TÄYTTÄÄ valiin jaavat positiot edellisella arvolla, koska
 // muuten resoluutio nayttaisi vaarin.
+// Muuntaa ISO 8601 -kestomerkinnän (esim. "PT15M", "PT60M", "P1D")
+// minuuteiksi. ENTSO-E kayttaa vain yksinkertaisia PT<n>M-muotoja
+// tunnetuille resoluutioille (PT15M, PT30M, PT60M) - tama kattaa nama.
+function resolutionToMinutes(resolution) {
+  const m = /^PT(\d+)M$/.exec(resolution || '');
+  if (m) return Number(m[1]);
+  const h = /^PT(\d+)H$/.exec(resolution || '');
+  if (h) return Number(h[1]) * 60;
+  return null; // tuntematon muoto - kutsuja voi paatella talta arvolta ettei taytto onnistu
+}
+
+// KRIITTINEN KORJAUS 2026-07-24 (loydetty live-testissa, /cross-border-flow
+// FI->SE1): ENTSO-E JATTAA POIS kokonaisia Point-elementteja kun arvo EI
+// MUUTU edellisesta - tama EI ole sama asia kuin "Point on olemassa mutta
+// quantity puuttuu" (jota alkuperainen versio kasitteli). Esimerkki: FI->SE1
+// -virtaus pysyi 0:ssa suurimman osan 24h-ikkunasta, ja ENTSO-E palautti
+// VAIN positiot 1, 39-42 - loput (2-38, 43-96) PUUTTUIVAT XML:sta KOKONAAN,
+// eivat vain niiden quantity-kentta. Alkuperainen koodi iteroi vain XML:ssa
+// OLEVIEN Point-elementtien yli, joten valiin jaavat positiot katosivat
+// kokonaan sen sijaan etta ne olisi taytetty edellisella tunnetulla arvolla.
+//
+// Korjaus: lasketaan resoluution ja timeInterval-pituuden perusteella
+// KAIKKI odotetut positiot (1..N), ja taytetaan puuttuvat carry-forward-
+// periaatteella (viimeisin tunnettu arvo, sama periaate kuin ENTSO-E:n
+// oma dokumentoitu "arvo pysyy kunnes uusi Point ilmoittaa muutoksen").
 function flattenPeriod(period) {
   if (!period) return [];
   const periods = Array.isArray(period) ? period : [period];
   const out = [];
   for (const p of periods) {
     const start = p.timeInterval?.start;
+    const end = p.timeInterval?.end;
     const resolution = p.resolution; // esim. "PT60M", "PT15M"
-    const points = Array.isArray(p.Point) ? p.Point : [p.Point].filter(Boolean);
-    let lastQty = null;
-    for (const pt of points) {
+    const rawPoints = Array.isArray(p.Point) ? p.Point : [p.Point].filter(Boolean);
+
+    // Kerataan XML:ssa OLEVAT pisteet position->quantity -karttaan.
+    const known = new Map();
+    for (const pt of rawPoints) {
       const pos = Number(pt.position);
-      const qty = pt.quantity != null ? Number(pt.quantity) : lastQty;
-      lastQty = qty;
-      out.push({ position: pos, quantity: qty, periodStart: start, resolution });
+      const qty = pt.quantity != null ? Number(pt.quantity) : null;
+      known.set(pos, qty);
+    }
+
+    const resMin = resolutionToMinutes(resolution);
+    let totalPositions = rawPoints.length ? Math.max(...known.keys()) : 0;
+    if (resMin && start && end) {
+      const startMs = Date.parse(start);
+      const endMs = Date.parse(end);
+      if (!Number.isNaN(startMs) && !Number.isNaN(endMs)) {
+        const computed = Math.round((endMs - startMs) / 60000 / resMin);
+        if (computed > 0) totalPositions = computed;
+      }
+    }
+
+    let lastQty = null;
+    for (let pos = 1; pos <= totalPositions; pos++) {
+      if (known.has(pos)) {
+        const q = known.get(pos);
+        if (q != null) lastQty = q;
+      }
+      out.push({ position: pos, quantity: lastQty, periodStart: start, resolution });
     }
   }
   return out;
