@@ -1,0 +1,15 @@
+{
+  "name": "aci-entsoe-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.90.0"
+  }
+}
