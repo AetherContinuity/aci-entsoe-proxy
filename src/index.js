@@ -295,7 +295,14 @@ async function handleCrossBorderFlow(url, env) {
 async function handleInstalledCapacity(url, env) {
   const bzn = url.searchParams.get('bzn') || 'SE1';
   const year = url.searchParams.get('year') || String(new Date().getUTCFullYear());
-  const psrType = url.searchParams.get('psrType') || PSR_WIND_ONSHORE;
+  // KORJATTU 2026-07-24: psrType on ENTSO-E:n oman dokumentaation mukaan
+  // VALINNAINEN - jos jatetaan pois, palautetaan KAIKKI tuotantotyypit.
+  // Alkuperainen koodi PAKOTTI aina jonkin arvon (oletus B19), mika esti
+  // "kaikki tyypit" -diagnostiikkakyselyn tekemisen kokonaan. Nyt: jos
+  // psrType-parametria ei anneta TAI se on "all", sita EI laheteta
+  // ENTSO-E:lle ollenkaan.
+  const psrTypeParam = url.searchParams.get('psrType');
+  const psrType = psrTypeParam && psrTypeParam !== 'all' ? psrTypeParam : null;
 
   try {
     const inDomain = eicFor(bzn);
@@ -304,17 +311,16 @@ async function handleInstalledCapacity(url, env) {
     const periodStart = `${year}-01-01T00:00:00Z`;
     const periodEnd = `${Number(year) + 1}-01-01T00:00:00Z`;
 
-    const parsed = await callEntsoe(
-      {
-        documentType: 'A68',
-        processType: 'A33', // Year ahead - sama processType-kuvio kuin muissa vuositason artikloissa
-        in_Domain: inDomain,
-        psrType,
-        periodStart: toEntsoeTime(periodStart),
-        periodEnd: toEntsoeTime(periodEnd),
-      },
-      env
-    );
+    const params = {
+      documentType: 'A68',
+      processType: 'A33', // Year ahead - VARMISTETTU riippumattomasta lahteesta 2026-07-24 (entsoe-apy.berrisch.biz)
+      in_Domain: inDomain,
+      periodStart: toEntsoeTime(periodStart),
+      periodEnd: toEntsoeTime(periodEnd),
+    };
+    if (psrType) params.psrType = psrType;
+
+    const parsed = await callEntsoe(params, env);
 
     const doc = parsed.GL_MarketDocument;
     const series = extractTimeSeries(doc).map((s) => ({
