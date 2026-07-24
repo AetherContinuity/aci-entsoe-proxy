@@ -41,6 +41,14 @@ const EIC = {
   SE2: '10Y1001A1001A45N',
   SE3: '10Y1001A1001A46L',
   SE4: '10Y1001A1001A47J',
+  // SE = Ruotsin KOKO MAAN/kontrollialueen (SvK CA) koodi - ERI kuin
+  // SE1-4-tarjousalueet. Lisatty 2026-07-24: artikla 14.1.A (Installed
+  // Capacity) osoittautui live-testissa palauttavan 'No matching data'
+  // KAIKILLE SE1+vuosi-yhdistelmille (2025 JA 2026, seka B19-suodattimella
+  // etta ilman) - todennakoisin syy on etta SvK raportoi taman artiklan
+  // koko maan tasolla, ei tarjousalueittain. EI VIELA vahvistettu
+  // toimivaksi - testattava.
+  SE:  '10YSE-1--------K',
   NO1: '10YNO-1--------2',
   NO2: '10YNO-2--------T',
   NO3: '10YNO-3--------J',
