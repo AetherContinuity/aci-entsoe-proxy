@@ -54,6 +54,13 @@ const EIC = {
   NO3: '10YNO-3--------J',
   NO4: '10YNO-4--------9',
   NO5: '10Y1001A1001A48H',
+  // NO = Norjan KOKO MAAN/kontrollialueen (Statnett CA) koodi - lisatty
+  // 2026-07-26 reservoir-filling-reittia varten, koska taman kaltainen
+  // kansallinen aggregaattidata (samoin kuin Ruotsin SE-koodi 14.1.A:lle)
+  // raportoidaan todennakoisesti maatasolla, ei yksittaisille NO1-5-
+  // tarjousalueille. Varmistettu kahdesta riippumattomasta lahteesta
+  // (ENTSO-E:n oma Market_Areas-dokumentti + entsoe-py/mappings.py).
+  NO:  '10YNO-0--------C',
   DK1: '10YDK-1--------W',
   DK2: '10YDK-2--------M',
   // EE = Viro (Elering). Lisatty 2026-07-26 kayttajan omasta ehdotuksesta -
@@ -434,6 +441,58 @@ async function handleDayAheadPrice(url, env) {
   }
 }
 
+// ── /reservoir-filling — Water Reservoirs and Hydro Storage Plants [16.1.D] ──
+// documentType=A72, processType=A16. Varmistettu kahdesta riippumattomasta
+// lahteesta (entsoe-py, entsoe-apy.berrisch.biz) 2026-07-26. Viikoittainen
+// keskimaarainen tayttoaste - sama paivitystahti kuin NVE:lla, jota HEM jo
+// kayttaa Norjan reservoaareille. Tama reitti mahdollistaisi (1) riippumattoman
+// ristiintarkistuksen NVE:n omaa Norja-dataa vastaan, (2) Ruotsin oman
+// reservoaaritayttoasteen, jota HEM ei viela kata ollenkaan.
+async function handleReservoirFilling(url, env) {
+  const bzn = url.searchParams.get('bzn') || 'NO';
+  const periodStart = url.searchParams.get('periodStart');
+  const periodEnd = url.searchParams.get('periodEnd');
+  if (!periodStart || !periodEnd) {
+    return json({ error: 'periodStart ja periodEnd (ISO 8601) ovat pakollisia' }, 400);
+  }
+
+  try {
+    const domain = eicFor(bzn);
+    const parsed = await callEntsoe(
+      {
+        documentType: 'A72',
+        processType: 'A16',
+        in_Domain: domain,
+        periodStart: toEntsoeTime(periodStart),
+        periodEnd: toEntsoeTime(periodEnd),
+      },
+      env
+    );
+
+    const doc = parsed.GL_MarketDocument || parsed.Publication_MarketDocument;
+    if (!doc) {
+      return json({ error: 'Tuntematon vastausrakenne', raw_keys: Object.keys(parsed) }, 502);
+    }
+    const series = extractTimeSeries(doc).map((s) => ({
+      unit: s['quantity_Measure_Unit.name'],
+      points: flattenPeriod(s.Period),
+    }));
+
+    return json({
+      source: 'ENTSO-E Transparency Platform',
+      documentType: 'A72 (Reservoir filling information)',
+      processType: 'A16 (Realised)',
+      bzn,
+      in_Domain: domain,
+      series,
+      caveat:
+        'EI VIELA live-testattu (kirjoitettu 2026-07-26). Viikoittainen keskiarvo - resoluutio todennakoisesti P7D tai vastaava, ei viela vahvistettu tasmalleen.',
+    });
+  } catch (e) {
+    return json({ error: e.message, step: 'reservoir-filling' }, 502);
+  }
+}
+
 function statusResponse() {
   return json({
     name: 'aci-entsoe-proxy',
@@ -444,6 +503,7 @@ function statusResponse() {
       '/cross-border-flow': 'Fyysinen rajavirtaus, molemmat suunnat · ?from=FI&to=SE1&periodStart=...&periodEnd=...',
       '/installed-capacity': 'Asennettu kapasiteetti tuotantotyypeittain, vuositaso · ?bzn=SE1&year=2026&psrType=B19',
       '/day-ahead-price': 'Day-ahead-spot-hinta EUR/MWh · ?bzn=FI&periodStart=...&periodEnd=... · KORVAA Fingridin oman rikkinaisen DS 336:n (Fingrid ei julkaise hintaa, ks. DA-003-tyokalun oma kommentti)',
+      '/reservoir-filling': 'Vesivarantojen tayttoaste (A72) · ?bzn=NO&periodStart=...&periodEnd=... · EI VIELA live-testattu · mahdollistaisi NVE-ristiintarkistuksen HEM:lle',
     },
     supported_bzn: Object.keys(EIC),
     reference: 'aethercontinuity.org/tools/entsoe-integration-plan.md',
@@ -470,6 +530,8 @@ export default {
         return await handleInstalledCapacity(url, env);
       } else if (path === '/day-ahead-price') {
         return await handleDayAheadPrice(url, env);
+      } else if (path === '/reservoir-filling') {
+        return await handleReservoirFilling(url, env);
       }
       return json({ error: 'Tuntematon reitti', path }, 404);
     } catch (e) {
