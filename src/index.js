@@ -155,11 +155,17 @@ function flattenPeriod(period) {
     const resolution = p.resolution; // esim. "PT60M", "PT15M"
     const rawPoints = Array.isArray(p.Point) ? p.Point : [p.Point].filter(Boolean);
 
-    // Kerataan XML:ssa OLEVAT pisteet position->quantity -karttaan.
+    // Kerataan XML:ssa OLEVAT pisteet position->arvo -karttaan.
+    // KORJATTU 2026-07-26 (loydetty /day-ahead-price-live-testissa):
+    // ENTSO-E:n hintadokumentit (A44) kayttavat kenttanimea "price.amount",
+    // EI "quantity" - MW-pohjaiset dokumentit (A75, A11, A68) kayttavat
+    // "quantity"-nimea. Tarkistetaan molemmat, jotta sama flattenPeriod
+    // toimii kaikille dokumenttityypeille.
     const known = new Map();
     for (const pt of rawPoints) {
       const pos = Number(pt.position);
-      const qty = pt.quantity != null ? Number(pt.quantity) : null;
+      const rawVal = pt.quantity != null ? pt.quantity : pt['price.amount'];
+      const qty = rawVal != null ? Number(rawVal) : null;
       known.set(pos, qty);
     }
 
