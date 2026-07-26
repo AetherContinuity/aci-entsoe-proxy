@@ -56,6 +56,11 @@ const EIC = {
   NO5: '10Y1001A1001A48H',
   DK1: '10YDK-1--------W',
   DK2: '10YDK-2--------M',
+  // EE = Viro (Elering). Lisatty 2026-07-26 kayttajan omasta ehdotuksesta -
+  // riippumaton ristiintarkistus Fingridin DS 187:lle ("Siirto Estlink"),
+  // jota ei saatu suoraan vahvistettua Fingridin omasta dataset-kuvauksesta.
+  // Varmistettu riippumattomasta lahteesta (entsoe-py/mappings.py) 2026-07-26.
+  EE:  '10Y1001A1001A39I',
 };
 
 // PsrType-koodit tuulelle (ENTSO-E:n oma tuotantotyyppikoodisto)
