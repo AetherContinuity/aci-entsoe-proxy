@@ -351,15 +351,88 @@ async function handleInstalledCapacity(url, env) {
   }
 }
 
+// ── /day-ahead-price — Day-ahead spot-hinta [12.1.D] ──
+// documentType=A44. in_Domain JA out_Domain OVAT SAMA alue (toisin kuin
+// cross-border-flow:ssa, jossa ne eroavat) - varmistettu useasta
+// riippumattomasta lahteesta (entsoe-py, entsoe-api-client, ENTSO-E:n
+// oma Market-API-dokumentaatio) 2026-07-26.
+//
+// TAUSTA: Fingrid EI JULKAISE hintatietoa omassa avoimessa datassaan
+// ollenkaan - heidan oma UKK sanoo etta hintatieto ei ole heidan
+// omistamaansa. Tama reitti korvaa DA-003-tyokalun rikkinaisen DS 336:n
+// (joka palautti aina 0, koska se oli todennakoisesti vaara/olematon
+// Fingrid-ID).
+//
+// TUNNETTU RAJOITE (2026-07-26): ENTSO-E:n oma Transparency Platform -
+// tiimi raportoi tammikuussa 2026 HTTP 400 -ongelman juuri Energy
+// Prices [12.1.D] -rajapinnalle, kiertotienä lisaparametri
+// businessType=A62. EI VARMISTETTU onko ongelma yha voimassa heinakuussa
+// 2026 - lisatty ENNALTAEHKAISEVASTI, poistettavissa jos ei tarpeen.
+//
+// EI VIELA LIVE-TESTATTU (toisin kuin wind-generation/cross-border-flow/
+// installed-capacity, jotka KAIKKI on jo vahvistettu toimiviksi).
+async function handleDayAheadPrice(url, env) {
+  const bzn = url.searchParams.get('bzn') || 'FI';
+  const periodStart = url.searchParams.get('periodStart');
+  const periodEnd = url.searchParams.get('periodEnd');
+  if (!periodStart || !periodEnd) {
+    return json({ error: 'periodStart ja periodEnd (ISO 8601) ovat pakollisia' }, 400);
+  }
+
+  try {
+    const domain = eicFor(bzn);
+    const parsed = await callEntsoe(
+      {
+        documentType: 'A44',
+        in_Domain: domain,
+        out_Domain: domain,
+        'contract_MarketAgreement.type': 'A01', // Day-ahead (A07 olisi intraday)
+        businessType: 'A62', // ENTSO-E:n oma tammikuun 2026 kiertotie-parametri HTTP 400 -bugille - katso ylla
+        periodStart: toEntsoeTime(periodStart),
+        periodEnd: toEntsoeTime(periodEnd),
+      },
+      env
+    );
+
+    // HUOM: root-elementin nimi (Publication_MarketDocument) EI OLE
+    // viela vahvistettu oikeaa hintavastausta vasten - oletus perustuu
+    // siihen etta hintadokumentit kuuluvat samaan IEC 62325-451-3
+    // -julkaisuperheeseen kuin cross-border-flow (A11), joka ON
+    // vahvistettu. Jos parsinta epaonnistuu, tarkista tama ensin.
+    const doc = parsed.Publication_MarketDocument || parsed.GL_MarketDocument;
+    if (!doc) {
+      return json({ error: 'Tuntematon vastausrakenne - ei Publication_MarketDocument eika GL_MarketDocument', raw_keys: Object.keys(parsed) }, 502);
+    }
+    const series = extractTimeSeries(doc).map((s) => ({
+      currency: s['currency_Unit.name'],
+      measureUnit: s['price_Measure_Unit.name'],
+      points: flattenPeriod(s.Period),
+    }));
+
+    return json({
+      source: 'ENTSO-E Transparency Platform',
+      documentType: 'A44 (Day-ahead price)',
+      bzn,
+      in_Domain: domain,
+      series,
+      caveat:
+        'EI VIELA live-testattu (kirjoitettu 2026-07-26). Publication_MarketDocument-oletus EI vahvistettu taman nimenomaisen dokumenttityypin osalta. businessType=A62 lisatty ennaltaehkaisevasti tammikuun 2026 HTTP 400 -bugin kiertotieksi - poista jos aiheuttaa oman virheen.',
+    });
+  } catch (e) {
+    return json({ error: e.message, step: 'day-ahead-price' }, 502);
+  }
+}
+
 function statusResponse() {
   return json({
     name: 'aci-entsoe-proxy',
-    version: '0.1.0',
-    status: 'EI VIELA TESTATTU LIVE-DATAA VASTAAN (kirjoitettu 2026-07-24)',
+    version: '0.2.0',
+    status: 'Kolme reittia (wind-generation, cross-border-flow, installed-capacity) LIVE-TESTATTU ja toimivat 2026-07-24. day-ahead-price lisatty 2026-07-26, EI VIELA live-testattu.',
     routes: {
       '/wind-generation': 'Tuulivoiman toteutunut tuotanto per tarjousalue · ?bzn=SE1&periodStart=...&periodEnd=...',
       '/cross-border-flow': 'Fyysinen rajavirtaus, molemmat suunnat · ?from=FI&to=SE1&periodStart=...&periodEnd=...',
       '/installed-capacity': 'Asennettu kapasiteetti tuotantotyypeittain, vuositaso · ?bzn=SE1&year=2026&psrType=B19',
+      '/day-ahead-price': 'Day-ahead-spot-hinta EUR/MWh · ?bzn=FI&periodStart=...&periodEnd=... · KORVAA Fingridin oman rikkinaisen DS 336:n (Fingrid ei julkaise hintaa, ks. DA-003-tyokalun oma kommentti)',
     },
     supported_bzn: Object.keys(EIC),
     reference: 'aethercontinuity.org/tools/entsoe-integration-plan.md',
@@ -384,6 +457,8 @@ export default {
         return await handleCrossBorderFlow(url, env);
       } else if (path === '/installed-capacity') {
         return await handleInstalledCapacity(url, env);
+      } else if (path === '/day-ahead-price') {
+        return await handleDayAheadPrice(url, env);
       }
       return json({ error: 'Tuntematon reitti', path }, 404);
     } catch (e) {
