@@ -493,6 +493,21 @@ async function handleReservoirFilling(url, env) {
   }
 }
 
+// TTL reitin päivitystaajuuden mukaan. day-ahead-price ja wind-generation/
+// cross-border-flow ovat ~15 min resoluutiota mutta ei tarvetta hakea
+// samaa ikkunaa uudelleen minuutin välein; installed-capacity on vuositason
+// koontisumma; reservoir-filling päivittyy viikoittain (sama tahti kuin NVE).
+function ttlForPath(path) {
+  switch (path) {
+    case '/wind-generation':    return 3600;  // 1h
+    case '/cross-border-flow':  return 3600;  // 1h
+    case '/day-ahead-price':    return 3600;  // 1h
+    case '/reservoir-filling':  return 21600; // 6h
+    case '/installed-capacity': return 86400; // 24h
+    default: return null;
+  }
+}
+
 function statusResponse() {
   return json({
     name: 'aci-entsoe-proxy',
@@ -511,7 +526,7 @@ function statusResponse() {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
@@ -519,21 +534,38 @@ export default {
       return new Response(null, { headers: CORS });
     }
 
+    const cache = caches.default;
+    if (request.method === 'GET') {
+      const hit = await cache.match(request);
+      if (hit) return hit;
+    }
+
     try {
+      let res;
       if (path === '/status' || path === '/') {
-        return statusResponse();
+        res = statusResponse();
       } else if (path === '/wind-generation') {
-        return await handleWindGeneration(url, env);
+        res = await handleWindGeneration(url, env);
       } else if (path === '/cross-border-flow') {
-        return await handleCrossBorderFlow(url, env);
+        res = await handleCrossBorderFlow(url, env);
       } else if (path === '/installed-capacity') {
-        return await handleInstalledCapacity(url, env);
+        res = await handleInstalledCapacity(url, env);
       } else if (path === '/day-ahead-price') {
-        return await handleDayAheadPrice(url, env);
+        res = await handleDayAheadPrice(url, env);
       } else if (path === '/reservoir-filling') {
-        return await handleReservoirFilling(url, env);
+        res = await handleReservoirFilling(url, env);
+      } else {
+        res = json({ error: 'Tuntematon reitti', path }, 404);
       }
-      return json({ error: 'Tuntematon reitti', path }, 404);
+
+      if (request.method === 'GET' && res.status === 200) {
+        const ttl = ttlForPath(path);
+        if (ttl) {
+          res.headers.set('Cache-Control', `public, max-age=${ttl}`);
+          ctx.waitUntil(cache.put(request, res.clone()));
+        }
+      }
+      return res;
     } catch (e) {
       return json({ error: e.message, stack: e.stack }, 500);
     }

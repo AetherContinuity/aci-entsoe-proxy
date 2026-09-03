@@ -49,6 +49,13 @@ FI, SE1, SE2, SE3, SE4, NO1, NO2, NO3, NO4, NO5, DK1, DK2
   tila existing/planned) EI VIELA integroitu - ks.
   aethercontinuity.org/tools/entsoe-integration-plan.md Askel 2b
 
+## Valimuisti
+
+Cloudflare Cache API (`caches.default`). TTL reitin mukaan (`ttlForPath`
+index.js:ssa): wind-generation/cross-border-flow/day-ahead-price 1h,
+reservoir-filling 6h (viikoittainen tahti, sama kuin NVE), installed-capacity
+24h (vuositason koontisumma). Vain onnistuneet (200) GET-vastaukset.
+
 ## Viite
 
 Taydellinen suunnitelma ja varmistetut API-parametrit:
