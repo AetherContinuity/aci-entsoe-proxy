@@ -51,7 +51,12 @@ FI, SE1, SE2, SE3, SE4, NO1, NO2, NO3, NO4, NO5, DK1, DK2
 
 ## Valimuisti
 
-Cloudflare Cache API (`caches.default`). TTL reitin mukaan (`ttlForPath`
+Workers Cache (`wrangler.toml`: `[cache]` `enabled = true`), EI Cache
+API:a (`caches.default`) — se ei toimi workers.dev-osoitteissa
+(vyohyketasoinen, jaettu kaikkien workers.dev-kayttajien kesken). Worker
+asettaa vain `Cache-Control`-otsikon; Cloudflare hoitaa haun ja
+tallennuksen itse ennen workerin ajoa. Vaatii Wrangler >=4.107.0 (paivitetty
+package.json:ssa, oli aiemmin ^3.90.0). TTL reitin mukaan (`ttlForPath`
 index.js:ssa): wind-generation/cross-border-flow/day-ahead-price 1h,
 reservoir-filling 6h (viikoittainen tahti, sama kuin NVE), installed-capacity
 24h (vuositason koontisumma). Vain onnistuneet (200) GET-vastaukset.

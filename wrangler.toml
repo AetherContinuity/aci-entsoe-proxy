@@ -2,3 +2,6 @@ name = "aci-entsoe-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 compatibility_flags = ["nodejs_compat"]
+
+[cache]
+enabled = true

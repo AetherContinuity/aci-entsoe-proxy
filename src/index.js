@@ -525,19 +525,16 @@ function statusResponse() {
   });
 }
 
+// Workers Cache (wrangler.toml [cache] enabled = true), ei Cache API:a
+// (caches.default) — se ei toimi workers.dev-osoitteissa. Cache-Control-
+// otsikko riittää; Cloudflare hoitaa haun ja tallennuksen itse.
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env) {
     const url = new URL(request.url);
     const path = url.pathname;
 
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: CORS });
-    }
-
-    const cache = caches.default;
-    if (request.method === 'GET') {
-      const hit = await cache.match(request);
-      if (hit) return hit;
     }
 
     try {
@@ -560,10 +557,7 @@ export default {
 
       if (request.method === 'GET' && res.status === 200) {
         const ttl = ttlForPath(path);
-        if (ttl) {
-          res.headers.set('Cache-Control', `public, max-age=${ttl}`);
-          ctx.waitUntil(cache.put(request, res.clone()));
-        }
+        if (ttl) res.headers.set('Cache-Control', `public, max-age=${ttl}`);
       }
       return res;
     } catch (e) {
