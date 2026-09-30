@@ -35,6 +35,13 @@ pushataan (natiivi Git-integraatio, ei GitHub Actions -workflowta).
 - `GET /installed-capacity?bzn=SE1&year=2026&psrType=B19`
   — asennettu kapasiteetti tuotantotyypeittain, vuositaso (documentType=A68) · ei viela testattu
 
+- `GET /balance` — vesivarantotase NO/SE/FI (A72). Viimeisin viikko,
+  perusjakson 2015–(edellinen vuosi) saman kalenteriviikon mediaani ja
+  poikkeama TWh:na, `years_lower`, `missing_years`, `age_days`. Lisäksi
+  `import_source` = NO+SE (mediaani vuosisummista, ei mediaanien summa).
+  Ei kapasiteettia eikä täyttöastetta. 36 ENTSO-E-kutsua, TTL 6 h.
+  HEM:n ja WEM:n yhteinen lähde (lisätty 2026-09-30).
+
 ## Tuetut tarjousalueet
 
 FI, SE1, SE2, SE3, SE4, NO1, NO2, NO3, NO4, NO5, DK1, DK2

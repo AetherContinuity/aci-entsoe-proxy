@@ -536,6 +536,129 @@ async function handleReservoirFilling(url, env) {
   }
 }
 
+// ── /balance — vesivarantotase: poikkeama saman viikon mediaanista, TWh ──
+// Lisatty 2026-09-30. HEM:n ja WEM:n yhteinen lahde: kumpikin sivu lukee
+// taman eika laske itse. Mitataan poikkeamaa TWh:na, EI tayttoastetta:
+// A72 ei sisalla kapasiteettia, ja SE/FI-kapasiteetit olivat HEM:ssa
+// kiinteita vakioita (SE 30,7 TWh ENTSO-E-ilmoitus, FI 5,5 TWh akateeminen
+// arvio). Poikkeama omasta historiasta ei tarvitse nimittajaa.
+//
+// Mediaani: jokaiselta perusjakson vuodelta se A72-piste, joka on lahimpana
+// viimeisimman havainnon kalenteripaivaa (enintaan 4 vrk). Ei interpolointia.
+// Perusjakso 2015..(havaintovuosi-1); A72-historia alkaa 2015.
+// Kutsuja: vyohyke x (1 + vuodet) -> 3 x 12 = 36 < 50 (Workers free -raja).
+// Vuoden puuttuminen raportoidaan (missing_years), ei korvata.
+const BALANCE_ZONES = ['NO', 'SE', 'FI'];
+const BALANCE_BASE_START = 2015;
+const DAY = 864e5;
+
+async function a72Points(bzn, startMs, endMs, env) {
+  const parsed = await callEntsoe({
+    documentType: 'A72', processType: 'A16', in_Domain: eicFor(bzn),
+    periodStart: toEntsoeTime(new Date(startMs).toISOString()),
+    periodEnd: toEntsoeTime(new Date(endMs).toISOString()),
+  }, env);
+  const doc = parsed.GL_MarketDocument || parsed.Publication_MarketDocument;
+  if (!doc) throw new Error('Tuntematon vastausrakenne');
+  return extractTimeSeries(doc)
+    .flatMap((s) => flattenPeriod(s.Period))
+    .filter((p) => p.quantity != null)
+    .map((p) => ({ ms: Date.parse(p.timestamp), twh: p.quantity / 1e6 }));
+}
+
+function median(xs) {
+  const s = [...xs].sort((a, b) => a - b);
+  const n = s.length;
+  return n ? (n % 2 ? s[(n - 1) / 2] : (s[n / 2 - 1] + s[n / 2]) / 2) : null;
+}
+
+function isoWeek(ms) {
+  // A72-piste alkaa sunnuntaina 22:00Z = maanantai 00:00 Keski-Euroopan aikaa.
+  const d = new Date(ms + 2 * 3600e3);
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + 3 - ((d.getUTCDay() + 6) % 7)); // viikon torstai
+  const y = d.getUTCFullYear();
+  const w = 1 + Math.floor((d - Date.UTC(y, 0, 1)) / DAY / 7);
+  return `${y}-W${String(w).padStart(2, '0')}`;
+}
+
+async function zoneBalance(bzn, nowMs, env) {
+  const cur = await a72Points(bzn, nowMs - 35 * DAY, nowMs, env);
+  if (!cur.length) throw new Error(`${bzn}: ei havaintoja 35 vrk:n ajalta`);
+  const last = cur[cur.length - 1];
+  const ref = new Date(last.ms);
+  const years = [];
+  for (let y = BALANCE_BASE_START; y < ref.getUTCFullYear(); y++) years.push(y);
+  const hist = await Promise.all(years.map(async (y) => {
+    const t = new Date(ref); t.setUTCFullYear(y);
+    try {
+      const pts = await a72Points(bzn, t.getTime() - 8 * DAY, t.getTime() + 8 * DAY, env);
+      const best = pts.reduce((b, p) => (!b || Math.abs(p.ms - t) < Math.abs(b.ms - t) ? p : b), null);
+      return best && Math.abs(best.ms - t) <= 4 * DAY ? { year: y, twh: best.twh } : { year: y, twh: null };
+    } catch (_) {
+      return { year: y, twh: null };
+    }
+  }));
+  const ok = hist.filter((h) => h.twh != null);
+  const med = median(ok.map((h) => h.twh));
+  const r3 = (x) => (x == null ? null : Math.round(x * 1000) / 1000);
+  return {
+    bzn,
+    week: isoWeek(last.ms),
+    week_start: new Date(last.ms).toISOString(),
+    age_days: Math.floor((nowMs - last.ms) / DAY),
+    content_twh: r3(last.twh),
+    median_twh: r3(med),
+    deviation_twh: med == null ? null : r3(last.twh - med),
+    min_twh: ok.length ? r3(Math.min(...ok.map((h) => h.twh))) : null,
+    max_twh: ok.length ? r3(Math.max(...ok.map((h) => h.twh))) : null,
+    years_lower: ok.filter((h) => h.twh < last.twh).length,
+    n_years: ok.length,
+    missing_years: hist.filter((h) => h.twh == null).map((h) => h.year),
+    history: Object.fromEntries(hist.map((h) => [h.year, r3(h.twh)])),
+  };
+}
+
+async function handleBalance(url, env) {
+  const nowMs = Date.now();
+  try {
+    const zones = await Promise.all(BALANCE_ZONES.map((z) => zoneBalance(z, nowMs, env)));
+    const by = Object.fromEntries(zones.map((z) => [z.bzn, z]));
+    // Tuonnin lahde NO+SE: mediaani vuosisummista, EI mediaanien summa.
+    const no = by.NO, se = by.SE;
+    let import_source = null;
+    if (no.week === se.week) {
+      const sums = Object.keys(no.history)
+        .filter((y) => no.history[y] != null && se.history[y] != null)
+        .map((y) => no.history[y] + se.history[y]);
+      const content = no.content_twh + se.content_twh;
+      const med = median(sums);
+      import_source = {
+        zones: ['NO', 'SE'],
+        week: no.week,
+        content_twh: Math.round(content * 1000) / 1000,
+        median_twh: med == null ? null : Math.round(med * 1000) / 1000,
+        deviation_twh: med == null ? null : Math.round((content - med) * 1000) / 1000,
+        years_lower: sums.filter((s) => s < content).length,
+        n_years: sums.length,
+      };
+    }
+    return json({
+      source: 'ENTSO-E Transparency Platform A72 (Realised)',
+      method: 'Poikkeama = viimeisin viikko − perusjakson saman kalenteriviikon mediaani (lähin A72-piste ≤ 4 vrk). ' +
+        'Ei kapasiteettia, ei täyttöastetta. years_lower = perusjakson vuodet, joina sisältö oli pienempi.',
+      base_period: `${BALANCE_BASE_START}–${new Date(no.week_start).getUTCFullYear() - 1}`,
+      zones: by,
+      import_source,
+      caveat: 'A72 julkaistaan viiveellä (tyypillisesti 1–2 viikkoa): katso age_days. ' +
+        'NO ristiintarkistettu NVE:tä vastaan (~0,3 %). NVE:n oma mediaani on eri perusjaksolta — luvut eivät ole keskenään vaihdettavissa.',
+      fetched: new Date(nowMs).toISOString(),
+    });
+  } catch (e) {
+    return json({ error: e.message, step: 'balance' }, 502);
+  }
+}
+
 // TTL reitin päivitystaajuuden mukaan. day-ahead-price ja wind-generation/
 // cross-border-flow ovat ~15 min resoluutiota mutta ei tarvetta hakea
 // samaa ikkunaa uudelleen minuutin välein; installed-capacity on vuositason
@@ -546,6 +669,7 @@ function ttlForPath(path) {
     case '/cross-border-flow':  return 3600;  // 1h
     case '/day-ahead-price':    return 3600;  // 1h
     case '/reservoir-filling':  return 21600; // 6h
+    case '/balance':            return 21600; // 6h (36 ENTSO-E-kutsua, historia ei muutu)
     case '/installed-capacity': return 86400; // 24h
     default: return null;
   }
@@ -561,7 +685,8 @@ function statusResponse() {
       '/cross-border-flow': 'Fyysinen rajavirtaus, molemmat suunnat · ?from=FI&to=SE1&periodStart=...&periodEnd=...',
       '/installed-capacity': 'Asennettu kapasiteetti tuotantotyypeittain, vuositaso · ?bzn=SE1&year=2026&psrType=B19',
       '/day-ahead-price': 'Day-ahead-spot-hinta EUR/MWh · ?bzn=FI&periodStart=...&periodEnd=... · KORVAA Fingridin oman rikkinaisen DS 336:n (Fingrid ei julkaise hintaa, ks. DA-003-tyokalun oma kommentti)',
-      '/reservoir-filling': 'Vesivarantojen tayttoaste (A72) · ?bzn=NO&periodStart=...&periodEnd=... · EI VIELA live-testattu · mahdollistaisi NVE-ristiintarkistuksen HEM:lle',
+      '/reservoir-filling': 'Vesivarantojen sisalto (A72, MWh) · ?bzn=NO&periodStart=...&periodEnd=... · live-testattu 2026-09-03 (FI, SE, NO)',
+      '/balance': 'Vesivarantotase NO/SE/FI: poikkeama saman viikon mediaanista TWh:na (perusjakso 2015–) + tuonnin lahde NO+SE · HEM:n ja WEM:n yhteinen lahde',
     },
     supported_bzn: Object.keys(EIC),
     reference: 'aethercontinuity.org/tools/entsoe-integration-plan.md',
@@ -594,6 +719,8 @@ export default {
         res = await handleDayAheadPrice(url, env);
       } else if (path === '/reservoir-filling') {
         res = await handleReservoirFilling(url, env);
+      } else if (path === '/balance') {
+        res = await handleBalance(url, env);
       } else {
         res = json({ error: 'Tuntematon reitti', path }, 404);
       }
