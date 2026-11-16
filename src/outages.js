@@ -94,11 +94,13 @@ export async function unzip(bytes) {
 
 // ── Dokumentin jasennys ──────────────────────────────────────────────
 
-function dt(dateAndTime) {
-  // start_DateAndOrTime: { date: '2026-11-17', time: '06:00:00Z' }
-  const d = txt(dateAndTime?.date);
+// Tagit ovat litteita: <start_DateAndOrTime.date> ja <start_DateAndOrTime.time>
+// (piste on osa tagin nimea, ei sisakkainen elementti). Live-testi 16.11.2026:
+// sisakkainen luku antoi start/end = null.
+function dt(ts, prefix) {
+  const d = txt(ts[`${prefix}.date`]);
   if (!d) return null;
-  const t = txt(dateAndTime?.time) || '00:00:00Z';
+  const t = txt(ts[`${prefix}.time`]) || '00:00:00Z';
   return `${d}T${t}`;
 }
 
@@ -152,8 +154,8 @@ export function parseUnavailability(xml) {
     planned: txt(ts.businessType) === 'A53' ? true : txt(ts.businessType) === 'A54' ? false : null,
     in_domain: txt(ts['in_Domain.mRID']),
     out_domain: txt(ts['out_Domain.mRID']),
-    start: dt(ts.start_DateAndOrTime),
-    end: dt(ts.end_DateAndOrTime),
+    start: dt(ts, 'start_DateAndOrTime'),
+    end: dt(ts, 'end_DateAndOrTime'),
     unit: txt(ts['quantity_Measure_Unit.name']),
     assets: (ts.Asset_RegisteredResource || []).map((a) => ({
       mrid: txt(a.mRID),

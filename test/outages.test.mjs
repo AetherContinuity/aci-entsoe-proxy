@@ -60,6 +60,8 @@ assert.equal(r.body.outages.length, 2, 'vain uusin revisio');
 const abc = r.body.outages.find((o) => o.document_mrid === 'ABC');
 assert.equal(abc.revision, 2);
 assert.equal(abc.planned, true);
+assert.equal(abc.start, '2026-11-16T00:00:00Z');
+assert.equal(abc.end, '2026-12-02T00:00:00Z');
 assert.equal(abc.in_domain, '10Y1001A1001A46L');
 assert.equal(abc.assets[0].name, 'Fenno-Skan 2');
 assert.equal(abc.reasons[0].code, 'B19');
@@ -86,4 +88,4 @@ assert.equal(r.status, 400);
 r = await handleTransmissionUnavailability(new URL(url + '&offset=50'), {}, deps(''));
 assert.equal(r.status, 400);
 
-console.log('OK: 13 tarkistusta');
+console.log('OK: 15 tarkistusta');
