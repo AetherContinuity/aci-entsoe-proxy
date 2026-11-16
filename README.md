@@ -35,6 +35,14 @@ pushataan (natiivi Git-integraatio, ei GitHub Actions -workflowta).
 - `GET /installed-capacity?bzn=SE1&year=2026&psrType=B19`
   — asennettu kapasiteetti tuotantotyypeittain, vuositaso (documentType=A68) · ei viela testattu
 
+- `GET /transmission-unavailability?from=FI&to=SE3&periodStart=...&periodEnd=...`
+  — siirtoverkon keskeytykset rajalla (documentType=A78, artikla 10.1.A&B).
+  Vastaus ZIP → purku `src/outages.js`. Valinnaiset: `businessType=A53|A54`
+  (suunniteltu/suunnittelematon), `docStatus`, `offset` (200:n sivut,
+  `next_offset` kertoo jatkon), `revisions=all` (oletus: vain uusin revisio).
+  `available_mw` = jäljelle jäävä kapasiteetti. TTL 30 min. Testattu vain
+  synteettisellä aineistolla (`node test/outages.test.mjs`) · ei vielä live-testattu
+
 - `GET /balance` — vesivarantotase NO/SE/FI (A72). Viimeisin viikko,
   perusjakson 2015–(edellinen vuosi) saman kalenteriviikon mediaani ja
   poikkeama TWh:na, `years_lower`, `missing_years`, `age_days`. Lisäksi

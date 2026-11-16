@@ -23,6 +23,7 @@
 // testiin.
 
 import { XMLParser } from 'fast-xml-parser';
+import { handleTransmissionUnavailability } from './outages.js';
 
 const ENTSOE_BASE = 'https://web-api.tp.entsoe.eu/api';
 
@@ -150,6 +151,15 @@ async function callEntsoe(params, env) {
   }
 
   return parsed;
+}
+
+// A78 palauttaa ZIPin, joten raakavastaus jasennetaan outages.js:ssa.
+async function callEntsoeRaw(params, env) {
+  if (!env.ENTSOE_SECURITY_TOKEN) {
+    throw new Error('ENTSOE_SECURITY_TOKEN puuttuu (wrangler secret put ENTSOE_SECURITY_TOKEN)');
+  }
+  const qs = new URLSearchParams({ securityToken: env.ENTSOE_SECURITY_TOKEN, ...params });
+  return fetch(`${ENTSOE_BASE}?${qs.toString()}`);
 }
 
 // Muuntaa yhden TimeSeries/Period-rakenteen yksinkertaiseksi pistelistaksi.
@@ -671,6 +681,7 @@ function ttlForPath(path) {
     case '/reservoir-filling':  return 21600; // 6h
     case '/balance':            return 21600; // 6h (36 ENTSO-E-kutsua, historia ei muutu)
     case '/installed-capacity': return 86400; // 24h
+    case '/transmission-unavailability': return 1800; // 30 min (UMM-paivitykset)
     default: return null;
   }
 }
@@ -686,6 +697,7 @@ function statusResponse() {
       '/installed-capacity': 'Asennettu kapasiteetti tuotantotyypeittain, vuositaso · ?bzn=SE1&year=2026&psrType=B19',
       '/day-ahead-price': 'Day-ahead-spot-hinta EUR/MWh · ?bzn=FI&periodStart=...&periodEnd=... · KORVAA Fingridin oman rikkinaisen DS 336:n (Fingrid ei julkaise hintaa, ks. DA-003-tyokalun oma kommentti)',
       '/reservoir-filling': 'Vesivarantojen sisalto (A72, MWh) · ?bzn=NO&periodStart=...&periodEnd=... · live-testattu 2026-09-03 (FI, SE, NO)',
+      '/transmission-unavailability': 'Siirtoverkon keskeytykset (A78, 10.1.A&B) rajalla · ?from=FI&to=SE3&periodStart=...&periodEnd=...[&businessType=A53|A54][&offset=200][&revisions=all] · EI VIELA live-testattu',
       '/balance': 'Vesivarantotase NO/SE/FI: poikkeama saman viikon mediaanista TWh:na (perusjakso 2015–) + tuonnin lahde NO+SE · HEM:n ja WEM:n yhteinen lahde',
     },
     supported_bzn: Object.keys(EIC),
@@ -719,6 +731,9 @@ export default {
         res = await handleDayAheadPrice(url, env);
       } else if (path === '/reservoir-filling') {
         res = await handleReservoirFilling(url, env);
+      } else if (path === '/transmission-unavailability') {
+        const r = await handleTransmissionUnavailability(url, env, { eicFor, toEntsoeTime, callRaw: callEntsoeRaw });
+        res = json(r.body, r.status);
       } else if (path === '/balance') {
         res = await handleBalance(url, env);
       } else {
